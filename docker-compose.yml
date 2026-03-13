@@ -1,0 +1,28 @@
+services:
+  frontend-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    profiles:
+      - dev
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    profiles:
+      - prod
+
+networks:
+  default:
+    name: homepedia-network
+    external: true
