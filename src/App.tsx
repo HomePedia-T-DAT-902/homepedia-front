@@ -1,9 +1,13 @@
+import MapView from "./components/map/MapView";
+
 function App() {
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <h1 className="text-3xl font-bold text-center py-8">Homepedia</h1>
-    </div>
-  )
+	return (
+		<main className="w-screen h-screen bg-slate-950">
+			<div className="p-2 h-[calc(100vh-8px)] w-[calc(100vw-8px)] rounded-3xl overflow-hidden">
+				<MapView />
+			</div>
+		</main>
+	);
 }
 
-export default App
+export default App;
