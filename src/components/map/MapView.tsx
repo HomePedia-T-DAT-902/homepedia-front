@@ -1,6 +1,6 @@
 "use client";
 
-import MapGL, { Layer, Source } from "react-map-gl/mapbox";
+import MapGL, { Layer, NavigationControl, Source } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { LayerProps, MapMouseEvent, MapRef } from "react-map-gl/mapbox";
@@ -26,12 +26,13 @@ const MIN_ZOOM_IRIS = 11;
 function MapView() {
 	const mapRef = useRef<MapRef | null>(null);
 
-	// État pour stocker l'ID de la parcelle survolée
 	const [hoveredParcelId, setHoveredParcelId] = useState<string | null>(null);
 	const [hoveredIrisCode, setHoveredIrisCode] = useState<string | null>(null);
 	const [hoveredIrisName, setHoveredIrisName] = useState<string | null>(null);
 	const [viewportBbox, setViewportBbox] = useState<Bbox | null>(null);
 	const [zoomLevel, setZoomLevel] = useState(15.5);
+	const [is3D, setIs3D] = useState(false);
+	const hoveredBuildingIds = useRef<{ id: number; source: string; sourceLayer: string }[]>([]);
 
 	const debouncedViewportBbox = useDebouncedValue(viewportBbox, 500);
 
@@ -63,40 +64,77 @@ function MapView() {
 		});
 	}, []);
 
-	// Gestionnaire de survol
-	const onMouseMove = useCallback((event: MapMouseEvent) => {
-		const { features } = event;
-
-		// Cadastre hover
-		const hoveredCadastreFeature = features?.find(
-			(feature) => feature.layer?.id === "cadastre-fill",
-		);
-		const hoveredFeatureId = hoveredCadastreFeature?.properties?.id;
-		if (hoveredFeatureId !== undefined && hoveredFeatureId !== null) {
-			setHoveredParcelId(String(hoveredFeatureId));
-		} else {
-			setHoveredParcelId(null);
+	const clearHoveredBuildings = useCallback(() => {
+		const map = mapRef.current;
+		if (!map) return;
+		for (const b of hoveredBuildingIds.current) {
+			map.setFeatureState(
+				{ source: b.source, sourceLayer: b.sourceLayer, id: b.id },
+				{ hover: false },
+			);
 		}
-
-		// IRIS hover
-		const hoveredIrisFeature = features?.find(
-			(feature) => feature.layer?.id === "iris-fill",
-		);
-		if (hoveredIrisFeature?.properties) {
-			setHoveredIrisCode(String(hoveredIrisFeature.properties.code_iris));
-			setHoveredIrisName(String(hoveredIrisFeature.properties.nom_iris));
-		} else {
-			setHoveredIrisCode(null);
-			setHoveredIrisName(null);
-		}
+		hoveredBuildingIds.current = [];
 	}, []);
 
-	// Réinitialisation quand la souris quitte la carte
+	const onMouseMove = useCallback(
+		(event: MapMouseEvent) => {
+			const map = mapRef.current;
+			const { features } = event;
+
+			// Cadastre hover
+			const hoveredCadastreFeature = features?.find(
+				(feature) => feature.layer?.id === "cadastre-fill",
+			);
+			const hoveredFeatureId = hoveredCadastreFeature?.properties?.id;
+			if (hoveredFeatureId !== undefined && hoveredFeatureId !== null) {
+				setHoveredParcelId(String(hoveredFeatureId));
+			} else {
+				setHoveredParcelId(null);
+			}
+
+			// IRIS hover
+			const hoveredIrisFeature = features?.find(
+				(feature) => feature.layer?.id === "iris-fill",
+			);
+			if (hoveredIrisFeature?.properties) {
+				setHoveredIrisCode(String(hoveredIrisFeature.properties.code_iris));
+				setHoveredIrisName(String(hoveredIrisFeature.properties.nom_iris));
+			} else {
+				setHoveredIrisCode(null);
+				setHoveredIrisName(null);
+			}
+
+			// Buildings hover (3D mode)
+			clearHoveredBuildings();
+			if (map && is3D && map.getLayer("3d-buildings")) {
+				const buildings = map.queryRenderedFeatures(event.point, {
+					layers: ["3d-buildings"],
+				});
+				for (const b of buildings) {
+					if (b.id != null && b.source && b.sourceLayer) {
+						const entry = {
+							id: b.id as number,
+							source: b.source,
+							sourceLayer: b.sourceLayer,
+						};
+						map.setFeatureState(
+							{ source: entry.source, sourceLayer: entry.sourceLayer, id: entry.id },
+							{ hover: true },
+						);
+						hoveredBuildingIds.current.push(entry);
+					}
+				}
+			}
+		},
+		[is3D, clearHoveredBuildings],
+	);
+
 	const onMouseLeave = useCallback(() => {
 		setHoveredParcelId(null);
 		setHoveredIrisCode(null);
 		setHoveredIrisName(null);
-	}, []);
+		clearHoveredBuildings();
+	}, [clearHoveredBuildings]);
 
 	// Filtre dynamique pour la surbrillance (met en évidence uniquement l'ID survolé)
 	const highlightFilter = useMemo(
@@ -110,15 +148,19 @@ function MapView() {
 	);
 
 	const buildingLayer: LayerProps = {
-		id: "add-3d-buildings",
+		id: "3d-buildings",
 		source: "composite",
 		"source-layer": "building",
 		filter: ["==", "extrude", "true"],
 		type: "fill-extrusion",
 		minzoom: 15,
 		paint: {
-			"fill-extrusion-color": "#aaa", // Couleur des bâtiments
-			// Utilisation d'une expression pour l'ombre portée et la hauteur
+			"fill-extrusion-color": [
+				"case",
+				["boolean", ["feature-state", "hover"], false],
+				"#ef4444",
+				"#aaa",
+			],
 			"fill-extrusion-height": [
 				"interpolate",
 				["linear"],
@@ -137,9 +179,23 @@ function MapView() {
 				15.05,
 				["get", "min_height"],
 			],
-			"fill-extrusion-opacity": 0.6,
+			"fill-extrusion-opacity": 0.7,
 		},
 	};
+
+	const toggle3D = useCallback(() => {
+		const map = mapRef.current;
+		if (!map) return;
+		setIs3D((prev) => {
+			const next = !prev;
+			map.easeTo({
+				pitch: next ? 60 : 0,
+				bearing: next ? -20 : 0,
+				duration: 500,
+			});
+			return next;
+		});
+	}, []);
 
 	const isLoading = parcellesQuery.isFetching || irisQuery.isFetching;
 	const loadingMessage = parcellesQuery.isFetching
@@ -165,53 +221,27 @@ function MapView() {
 				ref={mapRef}
 				mapboxAccessToken={import.meta.env.VITE_MAPBOX_ACCESS_TOKEN}
 				initialViewState={{
-					longitude: -1.201, // Modifié
-					latitude: 47.9928, // Modifié
-					zoom: 15.5, // Zoom plus proche pour voir les détails
-					pitch: 60, // Inclinaison à 60° pour l'effet 3D
-					bearing: -20, // Légère rotation pour plus de dynamisme
+					longitude: -1.201,
+					latitude: 47.9928,
+					zoom: 15.5,
+					pitch: 0,
+					bearing: 0,
 				}}
 				style={{
 					width: "100%",
 					height: "100%",
 					borderRadius: "1.5rem",
 				}}
-				mapStyle="mapbox://styles/mapbox/navigation-night-v1"
+				mapStyle="mapbox://styles/mapbox/streets-v12"
 				interactiveLayerIds={["cadastre-fill", "iris-fill"]}
 				onLoad={updateViewportBboxFromMap}
 				onMove={updateViewportBboxFromMap}
 				onMouseMove={onMouseMove}
 				onMouseLeave={onMouseLeave}
 			>
-				{/* Source pour le relief (Terrain) */}
-				<Source
-					id="mapbox-dem"
-					type="raster-dem"
-					url="mapbox://mapbox.mapbox-terrain-dem-v1"
-					tileSize={512}
-					maxzoom={14}
-				/>
+				<NavigationControl position="top-right" showCompass={false} />
 
-				{/* Application du terrain */}
-				<Layer
-					id="terrain-layer"
-					type="sky" // Optionnel : ajoute un ciel à l'horizon
-					paint={{
-						"sky-type": "gradient",
-						"sky-gradient": [
-							"interpolate",
-							["linear"],
-							["sky-radial-progress"],
-							0.8,
-							"rgba(0,0,0,0)",
-							1,
-							"rgba(0,0,0,0.5)",
-						],
-					}}
-				/>
-
-				{/* Couche de bâtiments 3D */}
-				<Layer {...buildingLayer} />
+				{is3D && <Layer {...buildingLayer} />}
 
 				{/* --- IRIS layers (underneath cadastre) --- */}
 				<Source id="iris-source" type="geojson" data={irisData}>
@@ -294,7 +324,6 @@ function MapView() {
 						}}
 					/>
 
-					{/* Optionnel : Légère surbrillance du fond au survol */}
 					<Layer
 						id="cadastre-fill-highlight"
 						type="fill"
@@ -302,12 +331,38 @@ function MapView() {
 						filter={highlightFilter}
 						paint={{
 							"fill-color": "#ef4444",
-							"fill-opacity": 0.2, // Remplissage rouge très transparent
+							"fill-opacity": 0.2,
 						}}
 					/>
 				</Source>
 				{/* --- FIN DE LA SECTION CADASTRE --- */}
 			</MapGL>
+			{/* Bouton 3D */}
+			<button
+				type="button"
+				onClick={toggle3D}
+				style={{
+					position: "absolute",
+					top: 80,
+					right: 10,
+					width: 29,
+					height: 29,
+					border: "none",
+					borderRadius: 4,
+					backgroundColor: is3D ? "#4f46e5" : "#fff",
+					color: is3D ? "#fff" : "#333",
+					fontSize: 12,
+					fontWeight: 700,
+					cursor: "pointer",
+					boxShadow: "0 0 0 2px rgba(0,0,0,0.1)",
+					display: "flex",
+					alignItems: "center",
+					justifyContent: "center",
+				}}
+				title={is3D ? "Passer en 2D" : "Passer en 3D"}
+			>
+				3D
+			</button>
 			{/* Tooltip parcelle */}
 			{hoveredParcelId && (
 				<div
