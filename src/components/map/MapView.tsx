@@ -5,24 +5,43 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { LayerProps, MapMouseEvent, MapRef } from "react-map-gl/mapbox";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
+import { useIrisQuery } from "../../hooks/useIrisQuery";
 import { useParcellesQuery } from "../../hooks/useParcellesQuery";
 import type { Bbox, CadastreFeatureCollection } from "../../types/cadastre";
+import type { IrisFeatureCollection } from "../../types/iris";
 
 const EMPTY_CADASTRE_DATA: CadastreFeatureCollection = {
 	type: "FeatureCollection",
 	features: [],
 };
 
+const EMPTY_IRIS_DATA: IrisFeatureCollection = {
+	type: "FeatureCollection",
+	features: [],
+};
+
+const MIN_ZOOM_PARCELLES = 15;
+const MIN_ZOOM_IRIS = 11;
+
 function MapView() {
 	const mapRef = useRef<MapRef | null>(null);
 
 	// État pour stocker l'ID de la parcelle survolée
 	const [hoveredParcelId, setHoveredParcelId] = useState<string | null>(null);
+	const [hoveredIrisCode, setHoveredIrisCode] = useState<string | null>(null);
+	const [hoveredIrisName, setHoveredIrisName] = useState<string | null>(null);
 	const [viewportBbox, setViewportBbox] = useState<Bbox | null>(null);
+	const [zoomLevel, setZoomLevel] = useState(15.5);
 
 	const debouncedViewportBbox = useDebouncedValue(viewportBbox, 500);
-	const parcellesQuery = useParcellesQuery(debouncedViewportBbox);
+
+	const parcellesBbox = zoomLevel >= MIN_ZOOM_PARCELLES ? debouncedViewportBbox : null;
+	const parcellesQuery = useParcellesQuery(parcellesBbox);
 	const cadastreData = parcellesQuery.data ?? EMPTY_CADASTRE_DATA;
+
+	const irisBbox = zoomLevel >= MIN_ZOOM_IRIS ? debouncedViewportBbox : null;
+	const irisQuery = useIrisQuery(irisBbox);
+	const irisData = irisQuery.data ?? EMPTY_IRIS_DATA;
 
 	const updateViewportBboxFromMap = useCallback(() => {
 		if (!mapRef.current) {
@@ -35,6 +54,7 @@ function MapView() {
 			return;
 		}
 
+		setZoomLevel(mapRef.current.getZoom());
 		setViewportBbox({
 			west: bounds.getWest(),
 			south: bounds.getSouth(),
@@ -46,28 +66,47 @@ function MapView() {
 	// Gestionnaire de survol
 	const onMouseMove = useCallback((event: MapMouseEvent) => {
 		const { features } = event;
-		// On cherche si la souris est au-dessus de notre couche transparente de cadastre
-		const hoveredFeature = features?.find(
+
+		// Cadastre hover
+		const hoveredCadastreFeature = features?.find(
 			(feature) => feature.layer?.id === "cadastre-fill",
 		);
-		const hoveredFeatureId = hoveredFeature?.properties?.id;
-
+		const hoveredFeatureId = hoveredCadastreFeature?.properties?.id;
 		if (hoveredFeatureId !== undefined && hoveredFeatureId !== null) {
 			setHoveredParcelId(String(hoveredFeatureId));
 		} else {
 			setHoveredParcelId(null);
+		}
+
+		// IRIS hover
+		const hoveredIrisFeature = features?.find(
+			(feature) => feature.layer?.id === "iris-fill",
+		);
+		if (hoveredIrisFeature?.properties) {
+			setHoveredIrisCode(String(hoveredIrisFeature.properties.code_iris));
+			setHoveredIrisName(String(hoveredIrisFeature.properties.nom_iris));
+		} else {
+			setHoveredIrisCode(null);
+			setHoveredIrisName(null);
 		}
 	}, []);
 
 	// Réinitialisation quand la souris quitte la carte
 	const onMouseLeave = useCallback(() => {
 		setHoveredParcelId(null);
+		setHoveredIrisCode(null);
+		setHoveredIrisName(null);
 	}, []);
 
 	// Filtre dynamique pour la surbrillance (met en évidence uniquement l'ID survolé)
 	const highlightFilter = useMemo(
 		() => ["in", "id", hoveredParcelId || ""],
 		[hoveredParcelId],
+	);
+
+	const irisHighlightFilter = useMemo(
+		() => ["==", ["get", "code_iris"], hoveredIrisCode || ""],
+		[hoveredIrisCode],
 	);
 
 	const buildingLayer: LayerProps = {
@@ -102,10 +141,17 @@ function MapView() {
 		},
 	};
 
-	const isLoadingParcelles = parcellesQuery.isFetching;
-	const parcellesError = parcellesQuery.error
+	const isLoading = parcellesQuery.isFetching || irisQuery.isFetching;
+	const loadingMessage = parcellesQuery.isFetching
+		? "Chargement des parcelles..."
+		: irisQuery.isFetching
+			? "Chargement des quartiers IRIS..."
+			: null;
+	const errorMessage = parcellesQuery.error
 		? "Impossible de charger les parcelles. Réessayez dans quelques secondes."
-		: null;
+		: irisQuery.error
+			? "Impossible de charger les quartiers IRIS."
+			: null;
 
 	return (
 		<div
@@ -131,7 +177,7 @@ function MapView() {
 					borderRadius: "1.5rem",
 				}}
 				mapStyle="mapbox://styles/mapbox/navigation-night-v1"
-				interactiveLayerIds={["cadastre-fill"]}
+				interactiveLayerIds={["cadastre-fill", "iris-fill"]}
 				onLoad={updateViewportBboxFromMap}
 				onMove={updateViewportBboxFromMap}
 				onMouseMove={onMouseMove}
@@ -167,11 +213,56 @@ function MapView() {
 				{/* Couche de bâtiments 3D */}
 				<Layer {...buildingLayer} />
 
+				{/* --- IRIS layers (underneath cadastre) --- */}
+				<Source id="iris-source" type="geojson" data={irisData}>
+					<Layer
+						id="iris-fill"
+						type="fill"
+						minzoom={10}
+						paint={{
+							"fill-color": "#10b981",
+							"fill-opacity": 0.08,
+						}}
+					/>
+					<Layer
+						id="iris-line"
+						type="line"
+						minzoom={10}
+						paint={{
+							"line-color": "#94a3b8",
+							"line-width": 1.5,
+							"line-opacity": 0.5,
+						}}
+					/>
+					<Layer
+						id="iris-highlight"
+						type="line"
+						minzoom={10}
+						filter={irisHighlightFilter}
+						paint={{
+							"line-color": "#10b981",
+							"line-width": 3,
+							"line-opacity": 1,
+						}}
+					/>
+					<Layer
+						id="iris-fill-highlight"
+						type="fill"
+						minzoom={10}
+						filter={irisHighlightFilter}
+						paint={{
+							"fill-color": "#10b981",
+							"fill-opacity": 0.25,
+						}}
+					/>
+				</Source>
+
 				<Source id="cadastre-source" type="geojson" data={cadastreData}>
 					{/* 1. Couche de remplissage transparente (pour capter le hover) */}
 					<Layer
 						id="cadastre-fill"
 						type="fill"
+						minzoom={MIN_ZOOM_PARCELLES}
 						paint={{
 							"fill-color": "transparent",
 							"fill-outline-color": "transparent",
@@ -182,6 +273,7 @@ function MapView() {
 					<Layer
 						id="cadastre-line"
 						type="line"
+						minzoom={MIN_ZOOM_PARCELLES}
 						paint={{
 							"line-color": "#eab308", // Jaune moutarde, bien visible sur le thème nuit
 							"line-width": 1.5,
@@ -193,6 +285,7 @@ function MapView() {
 					<Layer
 						id="cadastre-highlight"
 						type="line"
+						minzoom={MIN_ZOOM_PARCELLES}
 						filter={highlightFilter}
 						paint={{
 							"line-color": "#ef4444", // Rouge vif pour le hover
@@ -205,6 +298,7 @@ function MapView() {
 					<Layer
 						id="cadastre-fill-highlight"
 						type="fill"
+						minzoom={MIN_ZOOM_PARCELLES}
 						filter={highlightFilter}
 						paint={{
 							"fill-color": "#ef4444",
@@ -214,6 +308,7 @@ function MapView() {
 				</Source>
 				{/* --- FIN DE LA SECTION CADASTRE --- */}
 			</MapGL>
+			{/* Tooltip parcelle */}
 			{hoveredParcelId && (
 				<div
 					style={{
@@ -231,7 +326,25 @@ function MapView() {
 					Parcelle survolée : {hoveredParcelId}
 				</div>
 			)}
-			{(isLoadingParcelles || parcellesError) && (
+			{/* Tooltip IRIS */}
+			{hoveredIrisName && !hoveredParcelId && (
+				<div
+					style={{
+						position: "absolute",
+						top: 20,
+						left: 20,
+						padding: "8px 16px",
+						backgroundColor: "rgba(0, 0, 0, 0.8)",
+						color: "#10b981",
+						borderRadius: "8px",
+						fontWeight: "bold",
+						pointerEvents: "none",
+					}}
+				>
+					IRIS : {hoveredIrisName}
+				</div>
+			)}
+			{(isLoading || errorMessage) && (
 				<div
 					style={{
 						position: "absolute",
@@ -248,8 +361,8 @@ function MapView() {
 						border: "1px solid rgba(148, 163, 184, 0.35)",
 					}}
 				>
-					{isLoadingParcelles && "Chargement des parcelles..."}
-					{!isLoadingParcelles && parcellesError}
+					{isLoading && loadingMessage}
+					{!isLoading && errorMessage}
 				</div>
 			)}
 		</div>
