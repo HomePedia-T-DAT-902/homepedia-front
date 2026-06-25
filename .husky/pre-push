@@ -1,0 +1,4 @@
+# Mirror the CI `build` job (tsc -b && vite build). Kept on pre-push, not pre-commit,
+# so commits stay fast. There are no tests in the project / CI yet, so nothing else
+# runs here; add `npm test` once a test suite exists.
+npm run build
