@@ -1,13 +1,19 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AddressDialog } from "./components/AddressDialog";
-import { type CategoryId, FloatingPanel } from "./components/FloatingPanel";
-import MapView from "./components/map/MapView";
+import {
+	type CategoryId,
+	FloatingPanel,
+	type PrixViewMode,
+} from "./components/FloatingPanel";
+import MapView, { type MapViewHandle } from "./components/map/MapView";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { useCityQuery } from "./hooks/useCityQuery";
 import { useGeorisquesQuery } from "./hooks/useGeorisquesQuery";
 import { useIsochroneQuery } from "./hooks/useIsochroneQuery";
 import { usePoisQuery } from "./hooks/usePoisQuery";
+import { usePrixPointsQuery } from "./hooks/usePrixPointsQuery";
+import { useRiskPointsQuery } from "./hooks/useRiskPointsQuery";
 import { useRouteDurationsQuery } from "./hooks/useRouteDurationsQuery";
 import { useRouteQuery } from "./hooks/useRouteQuery";
 import { getInitialStateFromUrl, useUrlSync } from "./hooks/useUrlState";
@@ -17,6 +23,7 @@ import type { Poi } from "./types/poi";
 const initialState = getInitialStateFromUrl();
 
 function App() {
+	const mapViewRef = useRef<MapViewHandle | null>(null);
 	const [selectedAddress, setSelectedAddress] = useState<Address | null>(
 		initialState.address,
 	);
@@ -25,7 +32,7 @@ function App() {
 	);
 	const [radius, setRadius] = useState<number>(initialState.radius);
 	const [selectedPoi, setSelectedPoi] = useState<Poi | null>(null);
-	const [activeRisks, setActiveRisks] = useState<string[] | null>(null);
+	const [prixViewMode, setPrixViewMode] = useState<PrixViewMode>("points");
 
 	useUrlSync(selectedAddress, activeCategory, radius);
 
@@ -46,7 +53,11 @@ function App() {
 	);
 
 	const georisquesQuery = useGeorisquesQuery(
+		activeCategory === "risks" ? (selectedAddress?.citycode ?? null) : null,
+	);
+	const riskPointsQuery = useRiskPointsQuery(
 		activeCategory === "risks" ? (selectedAddress?.coordinates ?? null) : null,
+		radius,
 	);
 	const isochroneQuery = useIsochroneQuery(
 		activeCategory === "isochrone"
@@ -54,23 +65,27 @@ function App() {
 			: null,
 	);
 	const cityQuery = useCityQuery(
-		activeCategory === "city" ? (selectedAddress?.coordinates ?? null) : null,
+		activeCategory === "city" ? (selectedAddress?.citycode ?? null) : null,
+	);
+	const prixQuery = usePrixPointsQuery(
+		activeCategory === "prix" ? (selectedAddress?.coordinates ?? null) : null,
+		radius,
 	);
 
 	const extraData =
 		activeCategory === "risks"
 			? georisquesQuery.data
-				? {
-						...georisquesQuery.data,
-						activeRisks,
-						onToggleRisk: handleToggleRisk,
-					}
-				: undefined
 			: activeCategory === "isochrone"
 				? isochroneQuery.data
 				: activeCategory === "city"
 					? cityQuery.data
-					: undefined;
+					: activeCategory === "prix"
+						? {
+								...prixQuery.data,
+								viewMode: prixViewMode,
+								onViewModeChange: setPrixViewMode,
+							}
+						: undefined;
 
 	const isExtraLoading =
 		activeCategory === "risks"
@@ -79,25 +94,13 @@ function App() {
 				? isochroneQuery.isLoading
 				: activeCategory === "city"
 					? cityQuery.isLoading
-					: false;
-
-	function handleToggleRisk(label: string) {
-		const allLabels =
-			georisquesQuery.data?.risks
-				.filter((r) => r.niveau !== "Nul")
-				.map((r) => r.libelle) ?? [];
-		setActiveRisks((prev) => {
-			const current = prev ?? allLabels;
-			return current.includes(label)
-				? current.filter((l) => l !== label)
-				: [...current, label];
-		});
-	}
+					: activeCategory === "prix"
+						? prixQuery.isLoading
+						: false;
 
 	function handleAddressSelected(address: Address) {
 		setSelectedAddress(address);
 		setSelectedPoi(null);
-		setActiveRisks(null);
 	}
 
 	function handleCategoryChange(id: CategoryId | null) {
@@ -115,6 +118,7 @@ function App() {
 			{/* Map full screen */}
 			<div className="absolute inset-0">
 				<MapView
+					ref={mapViewRef}
 					selectedAddress={selectedAddress}
 					activeCategory={activeCategory}
 					pois={poisQuery.data}
@@ -123,12 +127,22 @@ function App() {
 					onPoiSelect={setSelectedPoi}
 					routeData={routeQuery.data ?? null}
 					isochroneData={isochroneQuery.data}
-					risksGeoJson={
-						activeCategory === "risks"
-							? georisquesQuery.data?.geojson
+					riskPointsGeoJson={
+						activeCategory === "risks" ? riskPointsQuery.data : undefined
+					}
+					prixColumnsGeoJson={
+						activeCategory === "prix"
+							? prixQuery.data?.columnsGeoJson
 							: undefined
 					}
-					activeRisks={activeRisks}
+					prixHeatmapGeoJson={
+						activeCategory === "prix"
+							? prixQuery.data?.heatmapGeoJson
+							: undefined
+					}
+					prixViewMode={prixViewMode}
+					prixMinPrice={prixQuery.data?.minPrice}
+					prixMaxPrice={prixQuery.data?.maxPrice}
 				/>
 			</div>
 
@@ -160,6 +174,7 @@ function App() {
 				onAddressSelected={handleAddressSelected}
 				radius={radius}
 				onRadiusChange={setRadius}
+				onRecenter={() => mapViewRef.current?.recenter()}
 			/>
 
 			{/* Full-height sidebar */}

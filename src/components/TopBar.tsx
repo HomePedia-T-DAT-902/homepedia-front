@@ -1,6 +1,6 @@
-import { Check, Link, MapPin, Pencil, X } from "lucide-react";
+import { Check, Link, LocateFixed, MapPin, Pencil, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useAddressSearch } from "../hooks/useAddressSearch";
+import { useAddressAutocomplete } from "../hooks/useAddressAutocomplete";
 import type { Address } from "../types/address";
 
 interface Props {
@@ -8,6 +8,7 @@ interface Props {
 	onAddressSelected: (address: Address) => void;
 	radius: number;
 	onRadiusChange: (r: number) => void;
+	onRecenter: () => void;
 }
 
 export function TopBar({
@@ -15,12 +16,20 @@ export function TopBar({
 	onAddressSelected,
 	radius,
 	onRadiusChange,
+	onRecenter,
 }: Props) {
 	const [isEditing, setIsEditing] = useState(!selectedAddress);
-	const [query, setQuery] = useState(selectedAddress?.label ?? "");
-	const [isFocused, setIsFocused] = useState(false);
 	const [copied, setCopied] = useState(false);
-	const { results, isLoading } = useAddressSearch(query);
+	const {
+		query,
+		setQuery,
+		results,
+		isLoading,
+		showDropdown,
+		handleFocus,
+		handleBlur,
+		closeDropdown,
+	} = useAddressAutocomplete(selectedAddress?.label ?? "");
 	const inputRef = useRef<HTMLInputElement>(null);
 
 	useEffect(() => {
@@ -33,7 +42,7 @@ export function TopBar({
 
 	function handleSelect(address: Address) {
 		setQuery(address.label);
-		setIsFocused(false);
+		closeDropdown();
 		onAddressSelected(address);
 		setIsEditing(false);
 	}
@@ -44,7 +53,6 @@ export function TopBar({
 		setTimeout(() => setCopied(false), 2000);
 	}
 
-	const showDropdown = isFocused && results.length > 0;
 	const trackPct = ((radius - 1) / 29) * 100;
 
 	return (
@@ -59,8 +67,8 @@ export function TopBar({
 							type="text"
 							value={query}
 							onChange={(e) => setQuery(e.target.value)}
-							onFocus={() => setIsFocused(true)}
-							onBlur={() => setTimeout(() => setIsFocused(false), 150)}
+							onFocus={handleFocus}
+							onBlur={handleBlur}
 							placeholder="Rechercher une adresse..."
 							className="flex-1 min-w-0 bg-transparent text-white text-xs placeholder-slate-500 outline-none"
 						/>
@@ -123,6 +131,19 @@ export function TopBar({
 					</ul>
 				)}
 			</div>
+
+			{/* Recenter button */}
+			{selectedAddress && (
+				<button
+					type="button"
+					onClick={onRecenter}
+					title="Recentrer sur l'adresse"
+					aria-label="Recentrer sur l'adresse"
+					className="cursor-pointer flex items-center justify-center w-9 h-9 rounded-xl glass border border-white/10 text-slate-300 hover:border-slate-500/60 hover:text-white shadow-xl transition-all shrink-0"
+				>
+					<LocateFixed size={15} />
+				</button>
+			)}
 
 			{/* Radius slider */}
 			<div className="flex items-center gap-2.5 px-3 py-2 rounded-xl glass border border-white/10 shadow-xl">

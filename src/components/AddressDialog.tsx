@@ -1,11 +1,12 @@
 import { ArrowRight, MapPin, Search, Sparkles } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { useAddressSearch } from "../hooks/useAddressSearch";
+import { useEffect, useRef } from "react";
+import { useAddressAutocomplete } from "../hooks/useAddressAutocomplete";
 import type { Address } from "../types/address";
 
 const DEFAULT_ADDRESS: Address = {
 	label: "10 Place de la République, 35000 Rennes",
 	coordinates: [-1.6794, 48.1126],
+	citycode: "35238",
 };
 
 interface AddressDialogProps {
@@ -13,16 +14,20 @@ interface AddressDialogProps {
 }
 
 export function AddressDialog({ onAddressSelected }: AddressDialogProps) {
-	const [query, setQuery] = useState("");
-	const [isFocused, setIsFocused] = useState(false);
-	const { results, isLoading } = useAddressSearch(query);
+	const {
+		query,
+		setQuery,
+		results,
+		isLoading,
+		showDropdown,
+		handleFocus,
+		handleBlur,
+	} = useAddressAutocomplete();
 	const inputRef = useRef<HTMLInputElement>(null);
 
 	useEffect(() => {
 		inputRef.current?.focus();
 	}, []);
-
-	const showDropdown = isFocused && results.length > 0;
 
 	return (
 		<div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -53,8 +58,8 @@ export function AddressDialog({ onAddressSelected }: AddressDialogProps) {
 							type="text"
 							value={query}
 							onChange={(e) => setQuery(e.target.value)}
-							onFocus={() => setIsFocused(true)}
-							onBlur={() => setTimeout(() => setIsFocused(false), 150)}
+							onFocus={handleFocus}
+							onBlur={handleBlur}
 							placeholder="Rechercher une adresse..."
 							className="flex-1 bg-transparent text-white text-sm placeholder-slate-500 outline-none"
 						/>
