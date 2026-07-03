@@ -24,6 +24,7 @@ export function useAddressSearch(query: string): {
 			data.features.map((f) => ({
 				label: f.properties.label,
 				coordinates: f.geometry.coordinates,
+				citycode: f.properties.citycode ?? null,
 			})),
 	});
 

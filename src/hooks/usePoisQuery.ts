@@ -1,18 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
 import type { CategoryId } from "../components/FloatingPanel";
 import type { Poi } from "../types/poi";
+import { computeBboxFromRadius } from "../utils/geo";
 
 type PoiCategoryId = Exclude<
 	CategoryId,
-	"air" | "isochrone" | "risks" | "city"
+	"isochrone" | "risks" | "city" | "prix"
 >;
 
 const MAPBOX_CATEGORY: Record<PoiCategoryId, string> = {
 	schools: "school",
 	health: "hospital,pharmacy",
 	shops: "grocery,convenience_store",
-	transport: "bus_station,train_station",
-	parks: "park,playground,sports_complex",
+	// "train_station"/"subway_station" ne sont pas des catégories Mapbox valides
+	// (vérifié via /list/category) — railway_station couvre le train,
+	// public_transportation_station couvre le métro/tram sans desserte ferrée.
+	transport: "bus_station,railway_station,public_transportation_station",
+	// "sports_complex" n'existe pas non plus côté Mapbox (0 résultat) ; le bon id est sports_center.
+	parks: "park,playground,sports_center",
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -21,34 +26,51 @@ const TYPE_LABELS: Record<string, string> = {
 	pharmacy: "Pharmacie",
 	grocery: "Épicerie",
 	convenience_store: "Commerce",
-	bus_station: "Bus",
-	train_station: "Train",
-	subway_station: "Métro",
+	bus_station: "Gare routière",
+	bus_stop: "Bus",
+	railway_station: "Train",
+	public_transportation_station: "Métro",
+	light_rail_station: "Tram",
 	park: "Parc",
 	playground: "Aire de jeux",
-	sports_complex: "Complexe sportif",
+	sports_center: "Complexe sportif",
 };
+
+// Un POI Mapbox peut porter plusieurs tags à la fois (ex: une station Châtelet
+// a "railway_station" ET "public_transportation_station") — cet ordre fixe
+// choisit le libellé le plus pertinent plutôt que de dépendre de l'ordre
+// renvoyé par l'API.
+const TYPE_PRIORITY = [
+	"railway_station",
+	"light_rail_station",
+	"public_transportation_station",
+	"bus_station",
+	"bus_stop",
+	"school",
+	"hospital",
+	"pharmacy",
+	"grocery",
+	"convenience_store",
+	"sports_center",
+	"park",
+	"playground",
+];
+
+function resolveType(ids: string[] | undefined, fallback: string): string {
+	const key = ids ? TYPE_PRIORITY.find((k) => ids.includes(k)) : undefined;
+	return key ? TYPE_LABELS[key] : fallback;
+}
 
 type MapboxFeature = {
 	properties: {
 		mapbox_id: string;
 		name: string;
 		poi_category?: string[];
+		poi_category_ids?: string[];
 		distance?: number;
 	};
 	geometry: { coordinates: [number, number] };
 };
-
-function computeBbox(
-	lng: number,
-	lat: number,
-	radiusKm: number,
-): [number, number, number, number] {
-	const latRad = lat * (Math.PI / 180);
-	const dlat = radiusKm / 110.574;
-	const dlng = radiusKm / (111.32 * Math.cos(latRad));
-	return [lng - dlng, lat - dlat, lng + dlng, lat + dlat];
-}
 
 async function fetchPois(
 	mapboxCategory: string,
@@ -58,7 +80,7 @@ async function fetchPois(
 ): Promise<Poi[]> {
 	const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 	const [lng, lat] = coordinates;
-	const bbox = computeBbox(lng, lat, radiusKm).join(",");
+	const bbox = computeBboxFromRadius(coordinates, radiusKm).join(",");
 	const url = `https://api.mapbox.com/search/searchbox/v1/category/${mapboxCategory}?proximity=${lng},${lat}&bbox=${bbox}&limit=20&language=fr&access_token=${token}`;
 
 	const res = await fetch(url, { signal });
@@ -71,16 +93,15 @@ async function fetchPois(
 			(f) => f.properties.distance == null || f.properties.distance <= radiusM,
 		)
 		.map((f) => {
-			const rawType = f.properties.poi_category?.[0] ?? "";
+			const fallback = f.properties.poi_category?.[0] ?? "";
 			return {
 				id: f.properties.mapbox_id,
 				name: f.properties.name,
-				type: TYPE_LABELS[rawType] ?? rawType,
+				type: resolveType(f.properties.poi_category_ids, fallback),
 				distance:
 					f.properties.distance != null
 						? `${Math.round(f.properties.distance)} m`
 						: "—",
-				distanceM: f.properties.distance,
 				coordinates: f.geometry.coordinates,
 			};
 		});

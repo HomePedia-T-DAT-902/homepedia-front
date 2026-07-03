@@ -11,6 +11,7 @@ const VALID_CATEGORIES: CategoryId[] = [
 	"risks",
 	"isochrone",
 	"city",
+	"prix",
 ];
 
 export function getInitialStateFromUrl(): {
@@ -23,12 +24,13 @@ export function getInitialStateFromUrl(): {
 	const label = params.get("address");
 	const lng = params.get("lng");
 	const lat = params.get("lat");
+	const citycode = params.get("citycode");
 	let address: Address | null = null;
 	if (label && lng !== null && lat !== null) {
 		const lngNum = parseFloat(lng);
 		const latNum = parseFloat(lat);
 		if (!isNaN(lngNum) && !isNaN(latNum)) {
-			address = { label, coordinates: [lngNum, latNum] };
+			address = { label, coordinates: [lngNum, latNum], citycode };
 		}
 	}
 
@@ -55,10 +57,16 @@ export function useUrlSync(
 			params.set("address", address.label);
 			params.set("lng", String(address.coordinates[0]));
 			params.set("lat", String(address.coordinates[1]));
+			if (address.citycode) {
+				params.set("citycode", address.citycode);
+			} else {
+				params.delete("citycode");
+			}
 		} else {
 			params.delete("address");
 			params.delete("lng");
 			params.delete("lat");
+			params.delete("citycode");
 		}
 
 		if (category) {
