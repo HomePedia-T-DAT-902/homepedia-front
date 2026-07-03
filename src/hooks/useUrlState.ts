@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import type { CategoryId } from "../components/FloatingPanel";
+import type { CategoryId } from "../components/categories";
 import type { Address } from "../types/address";
 
 const VALID_CATEGORIES: CategoryId[] = [

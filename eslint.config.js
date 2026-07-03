@@ -20,4 +20,13 @@ export default defineConfig([
 			globals: globals.browser,
 		},
 	},
+	{
+		// Category config module: a data table (CATEGORY_ICON, ACCENT_ACTIVE,
+		// CATEGORIES) paired with the small render helpers it points to — not a
+		// component file with a Fast Refresh boundary to protect.
+		files: ["src/components/categories.tsx"],
+		rules: {
+			"react-refresh/only-export-components": "off",
+		},
+	},
 ]);

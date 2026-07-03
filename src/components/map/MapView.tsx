@@ -30,7 +30,7 @@ import {
 	CATEGORY_ICON,
 	type CategoryId,
 	type PrixViewMode,
-} from "../FloatingPanel";
+} from "../categories";
 
 // Prix / m² : dégradé vert (bon marché) → ambre → rouge (cher).
 const PRIX_COLOR_LOW = "#22c55e";

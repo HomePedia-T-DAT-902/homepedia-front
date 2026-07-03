@@ -31,14 +31,11 @@ export function TopBar({
 		closeDropdown,
 	} = useAddressAutocomplete(selectedAddress?.label ?? "");
 	const inputRef = useRef<HTMLInputElement>(null);
+	const showInput = isEditing || !selectedAddress;
 
 	useEffect(() => {
-		if (!selectedAddress) setIsEditing(true);
-	}, [selectedAddress]);
-
-	useEffect(() => {
-		if (isEditing) inputRef.current?.focus();
-	}, [isEditing]);
+		if (showInput) inputRef.current?.focus();
+	}, [showInput]);
 
 	function handleSelect(address: Address) {
 		setQuery(address.label);
@@ -59,7 +56,7 @@ export function TopBar({
 		<div className="absolute top-4 right-4 z-20 flex items-center gap-2">
 			{/* Address chip */}
 			<div className="relative">
-				{isEditing || !selectedAddress ? (
+				{showInput ? (
 					<div className="flex items-center gap-2 px-3 py-2 rounded-xl glass border border-white/10 shadow-xl focus-within:border-accent/60 transition-colors w-56">
 						<MapPin size={15} className="text-slate-400 shrink-0" />
 						<input

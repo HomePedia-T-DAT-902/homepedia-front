@@ -1,5 +1,5 @@
 import type { Poi } from "../../types/poi";
-import { CATEGORIES, type CategoryId } from "../FloatingPanel";
+import { CATEGORIES, type CategoryId } from "../categories";
 
 interface Props {
 	activeCategory: CategoryId | null;

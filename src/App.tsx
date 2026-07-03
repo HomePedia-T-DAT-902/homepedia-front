@@ -1,10 +1,7 @@
 import { useRef, useState } from "react";
 import { AddressDialog } from "./components/AddressDialog";
-import {
-	type CategoryId,
-	FloatingPanel,
-	type PrixViewMode,
-} from "./components/FloatingPanel";
+import type { CategoryId, PrixViewMode } from "./components/categories";
+import { FloatingPanel } from "./components/FloatingPanel";
 import MapView, { type MapViewHandle } from "./components/map/MapView";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { TopBar } from "./components/TopBar";

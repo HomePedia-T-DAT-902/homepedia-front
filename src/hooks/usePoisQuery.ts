@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { CategoryId } from "../components/FloatingPanel";
+import type { CategoryId } from "../components/categories";
 import type { Poi } from "../types/poi";
 import { computeBboxFromRadius } from "../utils/geo";
 
