@@ -55,7 +55,7 @@ graph LR
 |----------------|-------------|
 | Pipeline données | Ingestion, traitement PySpark, chargement PostgreSQL |
 | API FastAPI | Endpoints communes, prix, stats, geo, reviews |
-| Frontend React | Carte interactive, graphiques, filtres, navigation par viewLevel |
+| Frontend React | Carte interactive centrée sur une adresse : POI (Mapbox), prix DVF, risques, isochrones, fiche commune |
 | Traitement avis | Notes agrégées + word cloud basique (ville-ideale.fr) |
 | CI/CD | GitHub Actions (lint + tests backend/frontend) |
 
@@ -79,10 +79,10 @@ graph LR
 
 ### Frontend : React + Vite (pas Next.js)
 
-- **Single-page interactive** : carte centrale + panneau latéral contextuel
-- **Pas de React Router** : navigation par `viewLevel` (national → region → departement → commune)
+- **Single-page centrée sur une adresse** : carte plein écran + panneau latéral contextuel, exploration par catégories (POI, prix, risques, isochrones, fiche commune)
+- **Pas de React Router** : état (adresse, catégorie, rayon) synchronisé dans l'URL
 - **Vite** et non Next.js : pas de SSR nécessaire (dashboard, pas de SEO), Mapbox incompatible SSR, évite un double backend (Node + Python)
-- **react-map-gl** (Mapbox GL JS) pour les cartes, **Recharts** pour les graphiques
+- **react-map-gl** (Mapbox GL JS) pour la carte ; données d'adresse via la Base Adresse Nationale, POI / itinéraires / isochrones via les APIs Mapbox
 
 ### Big Data : PySpark (unifié)
 

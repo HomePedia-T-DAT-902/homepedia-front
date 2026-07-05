@@ -1,296 +1,139 @@
-# Contrat API
+# Sources de données consommées par le frontend
 
-> **Source de vérité pour l'interface backend ↔ frontend.**
-> Pour le contexte global de l'architecture, voir [architecture.md](architecture.md).
+> Ce document liste **ce que le frontend appelle réellement** : l'API
+> `homepedia-api`, la Base Adresse Nationale et les APIs Mapbox.
+> La source de vérité des types de réponse est [`src/types/`](../src/types/).
 
 ---
 
-## Règles générales
+## 1. API backend `homepedia-api`
 
-- **Base URL** : `/api/v1` — tous les endpoints sont préfixés par ce chemin.
-- **Format** : toutes les réponses sont en **JSON** (`Content-Type: application/json`).
-- **Règle stricte** : le frontend ne doit **JAMAIS** utiliser un champ non défini dans ce contrat. Si un champ manque, l'ajouter au schéma Pydantic d'abord.
-- **Communication microservices** : le frontend (`homepedia-front`) appelle l'API via la variable d'env `VITE_API_URL`. En production, le reverse proxy Nginx route `/api/` vers le backend.
+- **Base URL** : `import.meta.env.VITE_API_URL` (vide → appels relatifs `/api/...`,
+  routés par le proxy Vite en dev ou Nginx en prod).
+- **Préfixe** : tous les endpoints sont sous `/api/v1`.
+- **Format** : JSON.
+- Client : [`src/api/httpClient.ts`](../src/api/httpClient.ts) — accès via les
+  [repositories](../src/repositories/).
+
+| Endpoint | Réponse (type TS) | Repository | Consommé par |
+| --- | --- | --- | --- |
+| `GET /api/v1/communes/{code}` | `CommuneDetail` | `communeRepository` | `useCityQuery` |
+| `GET /api/v1/reviews/{code}` | `ReviewSummary` | `reviewRepository` | `useCityQuery` |
+| `GET /api/v1/equipements/{code}` | `CommuneEquipements` | `equipementRepository` | `useCityQuery` |
+| `GET /api/v1/securite/{code}` | `CommuneSecurite` | `securiteRepository` | `useCityQuery` |
+| `GET /api/v1/education/{code}` | `CommuneEducation` | `educationRepository` | `useCityQuery` |
+| `GET /api/v1/risques/{code}` | `CommuneRisques` | `risqueRepository` | `useGeorisquesQuery` |
+| `GET /api/v1/qualite-air/{code}` | `CommuneQualiteAir` | `qualiteAirRepository` | `useGeorisquesQuery` |
+| `GET /api/v1/risques/geopoints?bbox={minLon,minLat,maxLon,maxLat}&limit=5000` | `RisqueGeopoint[]` | `risqueRepository` | `useRiskPointsQuery` |
+| `GET /api/v1/prix/points?bbox={minLon,minLat,maxLon,maxLat}&limit={n}` | `TransactionPoint[]` | `prixRepository` | `usePrixPointsQuery` |
+
+`{code}` = `code_commune` INSEE (5 caractères), issu de l'adresse BAN
+(`citycode`).
+
+### Formes de réponse (champs effectivement lus)
 
 ```typescript
-// src/api/client.ts (repo homepedia-front)
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
-// Dev : VITE_API_URL=http://localhost:8000
-// Prod : VITE_API_URL=https://api.homepedia.fr (ou routé via Nginx)
+// types/commune.ts — seuls ces champs sont consommés (useCityQuery)
+interface CommuneDetail {
+  nom: string;
+  code_postal: string | null;
+  population: number | null;
+  superficie: number | null;
+  code_departement: string | null;
+  nom_departement: string | null;
+  code_region: string | null;
+  nom_region: string | null;
+}
+
+// types/reviews.ts
+interface WordCloudEntry { mot: string; frequence: number; }
+interface ReviewSummary {
+  note_globale: number | null;
+  word_cloud: WordCloudEntry[];
+}
+
+// types/equipements.ts — comptages par type
+interface CommuneEquipements {
+  code_commune: string;
+  nb_equipements_total: number | null;
+  nb_maternelles: number | null; nb_primaires: number | null; nb_creches: number | null;
+  nb_colleges: number | null; nb_lycees: number | null;
+  nb_medecins: number | null; nb_pharmacies: number | null; nb_urgences: number | null;
+  nb_supermarches: number | null; nb_hypermarches: number | null; nb_gares: number | null;
+}
+
+// types/securite.ts — série annuelle (le front lit la dernière année)
+interface SecuriteAnnee {
+  annee: number;
+  cambriolages_pour_mille: number | null; violences_pour_mille: number | null;
+  vols_pour_mille: number | null; stups_pour_mille: number | null;
+  destructions_pour_mille: number | null;
+}
+interface CommuneSecurite { historique: SecuriteAnnee[]; }
+
+// types/education.ts — série annuelle (le front lit la dernière année)
+interface EducationAnnee {
+  annee: number;
+  bac_taux_reussite: number | null;
+  bac_presents: number | null;
+}
+interface CommuneEducation { historique: EducationAnnee[]; }
+
+// types/risques.ts — présence de chaque risque (true / false / null)
+interface CommuneRisques {
+  code_commune: string;
+  source_annee: number | null;
+  inondation: boolean | null; seisme: boolean | null;
+  mouvement_terrain: boolean | null; retrait_gonflement_argile: boolean | null;
+  radon: boolean | null; feu_foret: boolean | null; icpe: boolean | null;
+}
+
+// types/qualiteAir.ts
+interface CommuneQualiteAir {
+  annee: number | null; indice_atmo: number | null;
+  nb_jours_bon: number | null; nb_jours_moyen: number | null;
+  nb_jours_degrade: number | null; nb_jours_mauvais: number | null;
+  nb_jours_tres_mauvais: number | null; nb_jours_extremement_mauvais: number | null;
+}
 ```
+
+`RisqueGeopoint` (points de risque cartographiés) et `TransactionPoint` (points DVF,
+transformés en colonnes 3D / dégradé par `usePrixPointsQuery`) : voir
+[`types/risques.ts`](../src/types/risques.ts) et [`types/prix.ts`](../src/types/prix.ts).
 
 ---
 
-## Tableau des endpoints
+## 2. Base Adresse Nationale (BAN)
 
-| Endpoint | Méthode | Response | Cache | Params |
-|----------|---------|----------|-------|--------|
-| `/api/v1/communes/search` | GET | `list[CommuneSearch]` | 1h | `q` (string, min 2 chars) |
-| `/api/v1/communes/{code}` | GET | `CommuneDetail` | 1h | — |
-| `/api/v1/communes/regions` | GET | `list[RegionItem]` | 24h | — |
-| `/api/v1/communes/departments` | GET | `list[DepartementItem]` | 24h | `region` (code_region) |
-| `/api/v1/prices/{code_commune}` | GET | `PriceStats` | 6h | `period`, `type` |
-| `/api/v1/prices/trends/{code_dept}` | GET | `list[PriceTrend]` | 6h | — |
-| `/api/v1/stats/{code_commune}` | GET | `CommuneStats` | 6h | — |
-| `/api/v1/geo/communes` | GET | `GeoJSON FeatureCollection` | 24h | `bbox` |
-| `/api/v1/geo/departments` | GET | `GeoJSON FeatureCollection` | 24h | — |
-| `/api/v1/geo/choropleth` | GET | `ChoroplethData` | 6h | `indicator`, `level` |
-| `/api/v1/reviews/{code_commune}` | GET | `ReviewSummary` | 6h | — |
-| `/api/v1/geo/transactions` | GET | `GeoJSON FeatureCollection` | 6h | `bbox`, `type`, `annee` |
-| `/api/v1/geo/rpls` | GET | `GeoJSON FeatureCollection` | 24h | `bbox` |
+- **Base URL** : `https://api-adresse.data.gouv.fr` — pas d'authentification.
+- Recherche / autocomplétion d'adresse.
+
+| Endpoint | Réponse | Consommé par |
+| --- | --- | --- |
+| `GET /search/?q={query}&limit=5` | GeoJSON `FeatureCollection` (`BanFeatureCollection`) | `useAddressSearch` |
+
+Le front extrait de chaque feature : `properties.label`, `geometry.coordinates`
+(`[lon, lat]`) et `properties.citycode` (le `code_commune`).
 
 ---
 
-## Schémas Pydantic
+## 3. APIs Mapbox
 
-### Communes
+Toutes authentifiées par `access_token=VITE_MAPBOX_ACCESS_TOKEN`.
 
-**`schemas/commune.py`**
+| API | Endpoint | Consommé par |
+| --- | --- | --- |
+| Search Box (catégories) | `GET /search/searchbox/v1/category/{category}?proximity={lng,lat}&bbox={bbox}&limit=20&language=fr` | `usePoisQuery` |
+| Directions Matrix | `GET /directions-matrix/v1/mapbox/{profile}/{coords}?sources=0` | `useRouteDurationsQuery` |
+| Directions (marche) | `GET /directions/v5/mapbox/walking/{oLng,oLat};{dLng,dLat}?geometries=geojson` | `useRouteQuery` |
+| Isochrone (marche) | `GET /isochrone/v1/mapbox/walking/{lng,lat}?contours_minutes=5,10,15&polygons=true` | `useIsochroneQuery` |
 
-```python
-class RegionItem(BaseModel):
-    code_region: str           # "84"
-    nom: str                   # "Auvergne-Rhône-Alpes"
-
-class DepartementItem(BaseModel):
-    code_departement: str      # "69"
-    nom: str                   # "Rhône"
-    code_region: str
-
-class CommuneSearch(BaseModel):
-    code_commune: str          # "69123"
-    nom: str                   # "Lyon"
-    code_postal: str | None
-    nom_departement: str
-    nom_region: str
-
-class CommuneDetail(CommuneSearch):
-    code_departement: str
-    code_region: str
-    population: int | None
-    superficie: float | None
-    densite: float | None
-    latitude: float | None
-    longitude: float | None
-    prix_median_m2: float | None
-    nb_transactions_annee: int | None
-    revenu_median: float | None
-    taux_pauvrete: float | None
-    taux_chomage: float | None
-    classe_dpe_dominante: str | None
-    note_globale: float | None
-    nb_avis: int | None
-    zone_abc: str | None
-    loyer_median_m2: float | None
-    taux_vacance: float | None
-    nb_logements_sociaux: int | None
-```
-
-### Prix
-
-**`schemas/price.py`**
-
-```python
-class PriceRecord(BaseModel):
-    date_mutation: date
-    valeur_fonciere: float
-    type_local: str
-    surface_bati: float
-    nb_pieces: int | None
-    surface_terrain: float | None
-    prix_m2: float
-
-class PriceTrend(BaseModel):
-    annee: int
-    trimestre: int
-    type_local: str
-    prix_median_m2: float
-    nb_transactions: int
-    variation_annuelle_pct: float | None
-
-class PriceStats(BaseModel):
-    code_commune: str
-    prix_median_m2: float | None
-    prix_moyen_m2: float | None
-    nb_transactions_total: int
-    trends: list[PriceTrend]
-    distribution_type_local: dict[str, int]
-    prix_min_m2: float | None
-    prix_max_m2: float | None
-```
-
-### Statistiques
-
-**`schemas/stats.py`**
-
-```python
-class DpeDistribution(BaseModel):
-    classe_a: int
-    classe_b: int
-    classe_c: int
-    classe_d: int
-    classe_e: int
-    classe_f: int
-    classe_g: int
-    consommation_moyenne: float | None
-
-class EquipmentCounts(BaseModel):
-    nb_ecoles: int
-    nb_colleges: int
-    nb_lycees: int
-    nb_medecins: int
-    nb_dentistes: int
-    nb_pharmacies: int
-    nb_hopitaux: int
-    nb_gares: int
-    nb_supermarches: int
-    nb_total: int
-
-class CriminalityStats(BaseModel):
-    annee: int
-    # ... 15 indicateurs ...
-    total_faits: int
-    population: int | None
-    taux_pour_mille: float | None
-
-class LoyerStats(BaseModel):
-    loyer_m2_appartement: float | None
-    loyer_m2_maison: float | None
-    loyer_m2_app_3p: float | None
-    loyer_m2_app_12p: float | None
-
-class VacanceStats(BaseModel):
-    annee: int
-    nb_logements_total: int
-    nb_vacants: int
-    nb_vacants_longue_duree: int
-    taux_vacance: float
-
-class ZonageABC(BaseModel):
-    zone: str
-    reclassement: bool
-
-class RplsStats(BaseModel):
-    nb_logements_sociaux: int
-    surface_moyenne: float | None
-    repartition_financement: dict[str, int]
-    repartition_dpe: dict[str, int] | None
-
-class CommuneStats(BaseModel):
-    code_commune: str
-    revenu_median: float | None
-    taux_pauvrete: float | None
-    taux_chomage: float | None
-    population: int | None
-    dpe: DpeDistribution | None
-    equipements: EquipmentCounts | None
-    criminalite: list[CriminalityStats]
-    loyers: LoyerStats | None
-    rpls: RplsStats | None
-    vacance: list[VacanceStats]
-    zonage_abc: ZonageABC | None
-```
-
-### Géo
-
-**`schemas/geo.py`**
-
-```python
-class BBox(BaseModel):
-    min_lon: float
-    min_lat: float
-    max_lon: float
-    max_lat: float
-
-class ChoroplethItem(BaseModel):
-    code: str
-    nom: str
-    valeur: float
-
-class ChoroplethData(BaseModel):
-    indicator: str
-    level: str
-    items: list[ChoroplethItem]
-    geojson: dict[str, Any]
-```
-
-### Avis
-
-**`schemas/reviews.py`**
-
-```python
-class ReviewRatings(BaseModel):
-    environnement: float | None
-    transports: float | None
-    securite: float | None
-    sante: float | None
-    sports_loisirs: float | None
-    culture: float | None
-    education: float | None
-    commerces: float | None
-
-class WordCloudEntry(BaseModel):
-    mot: str
-    frequence: int
-
-class ReviewSummary(BaseModel):
-    code_commune: str
-    note_globale: float | None
-    nb_avis: int
-    ratings: ReviewRatings | None
-    word_cloud: list[WordCloudEntry]
-```
-
-### Commun
-
-**`schemas/pagination.py`**
-
-```python
-class PaginatedResponse(BaseModel, Generic[T]):
-    items: list[T]
-    total: int
-    page: int
-    page_size: int
-    has_next: bool
-```
-
-**`schemas/errors.py`**
-
-```python
-class ErrorDetail(BaseModel):
-    code: str        # "COMMUNE_NOT_FOUND"
-    message: str
-```
+Le fond de carte est rendu par **Mapbox GL JS** via `react-map-gl` (même token).
 
 ---
 
 ## Gestion d'erreurs
 
-Format de réponse d'erreur :
-
-```json
-{ "code": "COMMUNE_NOT_FOUND", "message": "Commune 99999 introuvable" }
-```
-
-| Code HTTP | Code erreur | Quand |
-|-----------|-------------|-------|
-| 400 | `INVALID_BBOX` | bbox mal formée |
-| 400 | `INVALID_INDICATOR` | indicateur choropleth inconnu |
-| 404 | `COMMUNE_NOT_FOUND` | code_commune inexistant |
-| 404 | `DEPARTMENT_NOT_FOUND` | code_departement inexistant |
-| 422 | (FastAPI auto) | Validation Pydantic échouée |
-
----
-
-## Correspondance vues ↔ endpoints
-
-| Vue | Déclencheur | Endpoints API | Carte |
-|-----|-------------|---------------|-------|
-| **NationalView** | `viewLevel=national` | `/geo/departments`, `/geo/choropleth` | Choropleth départements |
-| **RegionView** | `viewLevel=region` | `/geo/choropleth`, `/prices/trends/{dept}` | Zoom région, depts colorés |
-| **DepartementView** | `viewLevel=departement` | `/geo/communes?bbox=`, `/prices/trends/{dept}` | Zoom dept, bubble map communes |
-| **CommuneView** | `viewLevel=commune` | `/communes/{code}`, `/prices/{code}`, `/stats/{code}`, `/reviews/{code}`, `/geo/transactions?bbox=`, `/geo/rpls?bbox=` | Zoom commune, points cliquables |
-| **TendancesView** | `viewMode=tendances` | `/prices/{code}` (x N communes) | — |
-| **ComparaisonView** | `viewMode=comparaison` | `/communes/{code}` + `/stats/{code}` (x 2-4) | — |
-| **EnergieView** | `viewMode=energie` | `/geo/choropleth?indicator=classe_dpe` | Heatmap DPE |
-| **AvisView** | `viewMode=avis` | `/reviews/{code}`, `/geo/choropleth?indicator=note_globale` | Choropleth notes |
+`FetchHttpClient` lève une `Error` (`HTTP {status}: {statusText}`) sur toute réponse
+non-`ok`. Les hooks react-query gèrent le `retry` au cas par cas (désactivé pour les
+endpoints optionnels : équipements, sécurité, éducation, risques, qualité de l'air).
