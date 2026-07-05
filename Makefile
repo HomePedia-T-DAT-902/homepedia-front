@@ -1,48 +1,53 @@
-.PHONY: help install lint typecheck test build spec-update generate-types types-check ci clean
+.PHONY: help install dev up prod down logs lint typecheck build preview ci clean
+
+COMPOSE := docker compose
+NETWORK := homepedia-network
 
 help: ## Afficher cette aide
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-# ─── Setup ────────────────────────────────────────────────────────────
+# ─── Local ────────────────────────────────────────────────────────────
 
 install: ## Installer les dépendances
-	npm ci
+	npm install
+
+dev: ## Lancer le serveur Vite en local (http://localhost:3000)
+	npm run dev
+
+# ─── Docker ───────────────────────────────────────────────────────────
+
+network: ## Créer le réseau Docker partagé si besoin
+	@docker network inspect $(NETWORK) >/dev/null 2>&1 || docker network create $(NETWORK)
+
+up: network ## Tout lancer en Docker (dev, hot reload)
+	$(COMPOSE) --profile dev up --build
+
+prod: network ## Build de prod servi par Nginx (http://localhost)
+	$(COMPOSE) --profile prod up --build
+
+down: ## Arrêter les conteneurs
+	$(COMPOSE) --profile dev --profile prod down
+
+logs: ## Suivre les logs des conteneurs
+	$(COMPOSE) logs -f
 
 # ─── Qualité du code ─────────────────────────────────────────────────
 
 lint: ## Lancer le linter (ESLint)
-	npx eslint src/ --max-warnings 0
+	npm run lint
 
-format: ## Formater le code (Prettier)
-	npx prettier --write src/
+typecheck: ## Vérifier les types (tsc -b)
+	npm run typecheck
 
-typecheck: ## Vérifier les types (tsc)
-	npx tsc --noEmit
-
-# ─── Tests ────────────────────────────────────────────────────────────
-
-test: ## Lancer les tests (vitest)
-	npx vitest run
-
-build: ## Build de production
+build: ## Build de production (tsc -b && vite build)
 	npm run build
 
-# ─── Contrat API ──────────────────────────────────────────────────────
-
-generate-types: ## Générer les types TS depuis openapi.json
-	npx openapi-typescript openapi.json -o src/types/api.generated.ts
-
-spec-update: ## Récupérer le dernier openapi.json depuis le repo backend
-	gh release download latest -R org/homepedia-api -p openapi.json -D . --clobber
-	$(MAKE) generate-types
-
-types-check: generate-types ## Vérifier que les types générés sont à jour
-	@git diff --exit-code src/types/api.generated.ts || (echo "\n❌ Les types ne sont pas à jour. Committez api.generated.ts." && exit 1)
-	@echo "✅ Les types sont à jour"
+preview: ## Prévisualiser le build de production
+	npm run preview
 
 # ─── Raccourcis ───────────────────────────────────────────────────────
 
-ci: lint typecheck test types-check build ## Lancer tous les checks CI en local
+ci: lint typecheck build ## Rejouer les checks de la CI GitHub en local
 	@echo "\n✅ Tous les checks passent"
 
 clean: ## Nettoyer les fichiers temporaires

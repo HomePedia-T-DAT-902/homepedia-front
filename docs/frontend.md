@@ -1,159 +1,138 @@
 # Frontend React
 
-> **Stack** : React + Vite + TypeScript + react-map-gl + Recharts + Tailwind
+> **Stack** : React 19 + Vite + TypeScript + react-map-gl (Mapbox GL) +
+> @tanstack/react-query + Tailwind CSS + lucide-react
 >
-> Voir aussi : [architecture.md](architecture.md) (vue d'ensemble) · [api-contrat.md](api-contrat.md) (endpoints détaillés)
+> Voir aussi : [api-contrat.md](api-contrat.md) (sources de données consommées)
+
+L'application est une **single-page centrée sur une adresse**. Il n'y a pas de
+React Router ni de navigation par niveau géographique : on sélectionne une adresse
+puis on explore son voisinage via des **catégories**.
 
 ---
 
-## Navigation par viewLevel (single-page)
-
-L'application est une **single-page** sans React Router. La navigation se fait par changement de `viewLevel` via le hook `useMapNavigation`.
+## Flux principal
 
 ```mermaid
 graph TD
-    ACTION[Clic carte / Recherche] --> NAV[useMapNavigation.navigateTo<br/>level, code]
-    NAV --> VL[viewLevel change]
-    NAV --> ZOOM[Carte zoom animé]
-    NAV --> SP[SidePanel affiche la vue]
+    START[AddressDialog<br/>ou TopBar] -->|adresse BAN choisie| ADDR[selectedAddress]
+    ADDR --> URL[URL sync<br/>useUrlState]
+    FP[FloatingPanel<br/>choix catégorie] --> CAT[activeCategory]
+    RADIUS[TopBar<br/>slider rayon] --> R[radius]
 
-    subgraph Niveaux de navigation
-        N[national] -->|clic région| R[region]
-        R -->|clic département| D[departement]
-        D -->|clic commune| C[commune]
-        C -->|bouton retour| D
-        D -->|bouton retour| R
-        R -->|bouton retour| N
-    end
+    ADDR --> MAP[MapView]
+    CAT --> MAP
+    R --> MAP
+    ADDR --> SIDE[Sidebar]
+    CAT --> SIDE
 ```
+
+1. **Choix de l'adresse** — `AddressDialog` (au premier chargement si l'URL n'en
+   contient pas) ou la barre de recherche du `TopBar`. Les suggestions viennent de
+   la Base Adresse Nationale (`useAddressSearch` / `useAddressAutocomplete`).
+2. **Choix d'une catégorie** — colonne d'icônes `FloatingPanel`.
+3. **Rendu** — `MapView` (plein écran) affiche les données autour de l'adresse dans
+   le `radius` courant ; la `Sidebar` détaille la catégorie active.
+4. **Partage** — `useUrlState` (`getInitialStateFromUrl` / `useUrlSync`) garde
+   l'adresse, la catégorie et le rayon dans l'URL.
+
+---
+
+## Catégories
+
+Définies dans [`src/components/categories.tsx`](../src/components/categories.tsx)
+(`type CategoryId`).
+
+| Catégorie | `CategoryId` | Contenu | Données |
+| --- | --- | --- | --- |
+| Écoles | `schools` | POI + itinéraire à pied | Mapbox Search Box |
+| Commerces | `shops` | POI + itinéraire à pied | Mapbox Search Box |
+| Transports | `transport` | POI + itinéraire à pied | Mapbox Search Box |
+| Santé | `health` | POI + itinéraire à pied | Mapbox Search Box |
+| Espaces verts | `parks` | POI + itinéraire à pied | Mapbox Search Box |
+| Risques & Air | `risks` | risques recensés + qualité de l'air + points de risque sur la carte | API `risques`, `qualite-air` |
+| Accessibilité | `isochrone` | zones accessibles à pied (5 / 10 / 15 min) | Mapbox Isochrone |
+| Ville | `city` | fiche commune : population, note, équipements, sécurité, éducation, word cloud | API `communes`, `reviews`, `equipements`, `securite`, `education` |
+| Prix | `prix` | transactions DVF à proximité (colonnes 3D ou dégradé), prix/m² | API `prix/points` |
+
+Pour les catégories POI, un clic sur un élément de la `Sidebar` trace l'itinéraire
+à pied depuis l'adresse (`useRouteQuery`) et les durées de trajet sont pré-calculées
+(`useRouteDurationsQuery`).
+
+---
+
+## Composants
+
+| Composant | Rôle |
+| --- | --- |
+| `App` | Composition : état (adresse, catégorie, rayon, POI sélectionné, mode prix) et branchement des hooks |
+| `AddressDialog` | Sélection de l'adresse au premier chargement |
+| `TopBar` | Recherche d'adresse, slider de rayon, recentrage carte |
+| `FloatingPanel` | Colonne d'icônes de catégories |
+| `map/MapView` | Carte Mapbox plein écran (POI, points de risque, colonnes/dégradé de prix, isochrones, itinéraire). Expose `recenter()` via `MapViewHandle` |
+| `sidebar/Sidebar` | Panneau latéral contextuel selon la catégorie active |
+| `categories.tsx` | Déclaration des catégories + panneaux de rendu (`renderPanel` / `renderCustomPanel`) |
+
+---
+
+## Hooks (react-query)
+
+| Hook | Source | Rôle |
+| --- | --- | --- |
+| `useAddressSearch` / `useAddressAutocomplete` | BAN | recherche d'adresse (debounce 300 ms) |
+| `usePoisQuery` | Mapbox Search Box | POI par catégorie autour de l'adresse |
+| `useRouteDurationsQuery` | Mapbox Directions Matrix | durées de trajet adresse → POI |
+| `useRouteQuery` | Mapbox Directions (walking) | itinéraire vers le POI sélectionné |
+| `useIsochroneQuery` | Mapbox Isochrone | zones 5 / 10 / 15 min à pied |
+| `usePrixPointsQuery` | API `prix/points` | transactions DVF dans le rayon |
+| `useRiskPointsQuery` | API `risques/geopoints` | points de risque sur la carte |
+| `useGeorisquesQuery` | API `risques` + `qualite-air` | risques recensés + qualité de l'air de la commune |
+| `useCityQuery` | API `communes` + `reviews` + `equipements` + `securite` + `education` | agrégat de la fiche « Ville » |
+| `useDebouncedValue` | — | debounce générique |
+| `useUrlState` | — | (dé)sérialisation de l'état dans l'URL |
+
+---
+
+## Accès aux données
+
+Client HTTP générique : [`src/api/httpClient.ts`](../src/api/httpClient.ts)
+(`FetchHttpClient.getJson<T>`, gère la query string et l'`AbortSignal`).
+
+Les **repositories** ([`src/repositories/`](../src/repositories/)) encapsulent les
+endpoints backend. La plupart suivent le même patron
+`/api/v1/<domaine>/{codeCommune}` et sont créés par
+`createCommuneRepository(path)` :
 
 ```typescript
-type ViewLevel = "national" | "region" | "departement" | "commune";
-type ViewMode = "explore" | "tendances" | "comparaison" | "energie" | "avis";
-
-interface MapNavigationState {
-  viewLevel: ViewLevel;
-  viewMode: ViewMode;
-  codeRegion: string | null;
-  codeDepartement: string | null;
-  codeCommune: string | null;
-  navigateTo: (level: ViewLevel, code?: string) => void;
-  setViewMode: (mode: ViewMode) => void;
-  goBack: () => void;
-}
+// src/repositories/equipementRepository.ts
+export const equipementRepository =
+  createCommuneRepository<CommuneEquipements>("equipements");
 ```
 
-**Flux** :
-1. **Clic carte** : national → clic région → `region` → clic dept → `departement` → clic commune → `commune`
-2. **Recherche** : saut direct à n'importe quel niveau
-3. **Bouton retour** : remonte d'un niveau
-4. **Navbar** : accès aux modes spéciaux (tendances, comparaison, énergie, avis)
+Deux repositories ont des endpoints spécifiques :
+`prixRepository.getPoints(bbox, { limit })` → `/api/v1/prix/points` et
+`risqueRepository.getGeopoints(bbox)` → `/api/v1/risques/geopoints`.
 
----
-
-## Détail CommuneView (onglets)
-
-```
-SidePanel :
-├─ KpiCards → résumé (prix, population, DPE, note, zone ABC, loyer, vacance)
-├─ Tab "Prix"         → LineChart historique + BoxPlot distribution
-├─ Tab "Loyers"       → KpiCards (loyer/m² app, maison) + comparaison achat vs loyer
-├─ Tab "DPE"          → BarChart classes A-G
-├─ Tab "Équipements"  → BarChart par catégorie
-├─ Tab "Revenus"      → KpiCards (revenu, pauvreté, chômage)
-├─ Tab "Logement"     → BarChart vacance + KpiCards (logements sociaux, zone ABC)
-├─ Tab "Criminalité"  → BarChart par type
-└─ Tab "Avis"         → RadarChart 8 critères + WordCloud
-```
-
----
-
-## Correspondance vues ↔ endpoints
-
-Le tableau détaillé des correspondances entre vues, endpoints API et comportement carte se trouve dans **[api-contrat.md](api-contrat.md)**.
-
----
-
-## Client API centralisé
-
-```typescript
-// src/api/client.ts (repo homepedia-front)
-const API_BASE = import.meta.env.VITE_API_URL || "/api/v1";
-
-export async function fetchApi<T>(
-  endpoint: string,
-  params?: Record<string, string>,
-): Promise<T> {
-  const url = new URL(`${API_BASE}${endpoint}`, window.location.origin);
-  if (params) {
-    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-  }
-  const res = await fetch(url.toString());
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.message || `API error ${res.status}`);
-  }
-  return res.json();
-}
-```
-
----
-
-## Custom hooks (TanStack Query)
-
-```typescript
-// src/hooks/useCommune.ts (repo homepedia-front)
-export function useCommune(code: string | null) {
-  return useQuery({
-    queryKey: ["commune", code],
-    queryFn: () => fetchCommune(code!),
-    enabled: !!code,
-    staleTime: 1000 * 60 * 60, // 1h
-  });
-}
-```
-
----
-
-## Filtres globaux
-
-```typescript
-interface FilterState {
-  dateRange: [number, number]; // [2014, 2025]
-  typeLocal: string[];         // ["Maison", "Appartement"]
-}
-```
-
----
-
-## Composants réutilisables
-
-| Composant | Props principales | Vues |
-|-----------|-------------------|------|
-| **Layout** | `children` | Wrape App.tsx |
-| **MapView** | `geojson`, `indicator`, `level`, `palette`, `bbox`, `onFeatureClick` | Toujours visible |
-| **SidePanel** | `viewLevel`, `viewMode`, `children` | Toujours visible |
-| **Charts.LineChart** | `data`, `xKey`, `yKey`, `series[]`, `title` | National, Region, Dept, Commune, Tendances |
-| **Charts.BarChart** | `data`, `categoryKey`, `valueKey`, `colors` | Commune (DPE, Équipements, Crime) |
-| **Charts.RadarChart** | `data`, `categories[]`, `series[]` | Commune (Avis), Comparaison |
-| **Charts.BoxPlot** | `data`, `quartiles`, `outliers` | Commune (Prix) |
-| **Filters** | `dateRange`, `typeLocal`, `communes`, `onChange` | Dept, Tendances, Comparaison |
-| **KpiCards** | `items: {label, value, trend?, icon?}[]` | National, Commune |
-| **WordCloud** | `words: {mot, fréquence}[]`, `maxWords` | Commune, Avis |
+La base URL vient de `import.meta.env.VITE_API_URL`. Si la variable est absente,
+`FetchHttpClient` utilise `window.location.origin` et les appels partent en relatif
+(`/api/...`) — pris en charge par le proxy Vite en dev, par Nginx en prod.
 
 ---
 
 ## Config Vite
 
 ```typescript
-// vite.config.ts (repo homepedia-front)
+// vite.config.ts
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
-    port: 5173,
-    host: true, // Accessible depuis Docker
+    proxy: {
+      "/api": { target: "http://localhost:8000", changeOrigin: true },
+    },
   },
 });
 ```
 
-> **Note** : en architecture microservices, le frontend utilise `VITE_API_URL` (variable d'env) pour appeler l'API, pas de proxy Vite. En production, le reverse proxy Nginx gère le routage `/api/` vers le backend.
+Le serveur de dev écoute sur le **port 3000** (`npm run dev` → `vite --port 3000`).
+En production, Nginx ([nginx.conf](../nginx.conf)) sert le build statique et proxifie
+`/api/` vers le service `api`.
